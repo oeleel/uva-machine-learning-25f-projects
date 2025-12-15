@@ -127,39 +127,6 @@ This generates plots in the `src/plots/` directory showing:
 - Model comparison
 - Feature importance
 
-## First Run
-
-On the first run, the system will:
-1. Load and preprocess the dataset (~114,000 tracks)
-2. **Train the hybrid ML model** (takes 2-5 minutes)
-3. Save the model to `hybrid_model.pkl` for future use
-
-Subsequent runs will load the pre-trained model (much faster).
-
-## Evaluation Metrics
-
-The system evaluates recommendations on:
-- **BPM Compatibility**: % within ±6 BPM (target: 100%)
-- **Key Compatibility**: % with compatible keys (target: 80%+)
-- **Energy Flow**: Average energy difference (target: smooth transitions)
-- **Response Time**: Must be < 1 second
-
-## Camelot Wheel
-
-The Camelot Wheel is the industry standard for harmonic mixing. Compatible keys are:
-
-- Same key (e.g., 8A → 8A)
-- ±1 on the wheel (e.g., 8A → 7A or 9A)
-- Same number, different mode (e.g., 8A → 8B)
-
-## Performance
-
-| Stage | Time |
-|-------|------|
-| First run (includes training) | 2-5 minutes |
-| Subsequent runs (cached model) | < 1 second |
-| Recommendation generation | < 0.3 seconds |
-
 ## Documentation
 
 See `doc/QUICKSTART.md` for detailed usage instructions and troubleshooting.
