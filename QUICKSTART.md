@@ -1,160 +1,142 @@
-# Quick Start Implementation Guide
+# DJ Mixing Recommendation System - Quick Start Guide
 
-## Step-by-Step Implementation for Your Team
+## Prerequisites
 
-### Phase 1: Setup (Week 1)
+1. **Python 3.7+** installed on your system
+2. **Dataset file** at `data/dataset.csv`
 
-**Person 1 & 2: Data Setup**
-1. Download Spotify dataset from Kaggle:
-   - Link: https://www.kaggle.com/datasets/vatsalmavani/spotify-dataset
-   - Or search for any Spotify dataset with: tempo, key, mode, energy, valence, danceability
-2. Create `data/` folder and place CSV inside
-3. Run `data_preprocessing.py` to clean and prepare data
-4. Verify Camelot notation is added correctly
+## Installation
 
-**Person 3 & 4: Code Testing**
-1. Install dependencies: `pip install -r requirements.txt`
-2. Test `utils.py` functions work correctly
-3. Run each model file individually to verify imports work
-
-### Phase 2: Model Implementation (Week 2)
-
-**Person 1: Rule-Based Model**
-- File: `model_rule_based.py`
-- Tasks:
-  1. Test BPM filtering with different tolerances (±4, ±6, ±8)
-  2. Verify key compatibility using Camelot Wheel
-  3. Run batch evaluation on 50-100 songs
-  4. Document results in notebook
-
-**Person 2: Audio Similarity Baseline**
-- File: `model_audio_similarity.py`
-- Tasks:
-  1. Experiment with different feature combinations
-  2. Try different similarity metrics (cosine, euclidean)
-  3. Evaluate how poorly it matches DJ rules (this is expected!)
-  4. Document insights
-
-**Person 3: Hybrid ML Model**
-- File: `model_hybrid_ml.py`
-- Tasks:
-  1. Generate training pairs (start with 5000, scale to 10000+)
-  2. Train XGBoost with different hyperparameters
-  3. Analyze feature importance
-  4. Compare performance vs baselines
-
-**Person 4: Evaluation & Demo**
-- Tasks:
-  1. Create evaluation framework comparing all models
-  2. Generate visualizations (BPM dist, key dist, model comparison)
-  3. Build interactive demo in notebook
-  4. Prepare demo video script
-
-### Phase 3: Analysis (Week 3)
-
-**Everyone: Run Full Pipeline**
-1. Open `dj_mixing_analysis.ipynb` in Jupyter
-2. Run each cell sequentially
-3. Document results and insights
-
-**Key Analyses to Complete:**
-- BPM tolerance sensitivity (Person 1)
-- Feature importance analysis (Person 3)
-- Model comparison charts (Person 4)
-- Edge case testing: half-tempo, key changes (Person 2)
-
-### Phase 4: Final Deliverables (Week 4)
-
-**Slide Deck (Everyone):**
-- Use your Shark Tank presentation as template
-- Add results slides with:
-  - Model comparison table
-  - Feature importance chart
-  - Example recommendations
-  - Key insights
-
-**Demo Video (Person 4 lead, all participate):**
-1. Script outline:
-   - Intro: Problem statement (30 sec)
-   - Show source song (10 sec)
-   - Demo all 3 models side-by-side (60 sec)
-   - Show evaluation metrics (30 sec)
-   - Conclusion: Hybrid wins! (20 sec)
-2. Record using Zoom/OBS
-3. Upload to YouTube (unlisted)
-4. Add link to slide deck
-
-**GitHub PR:**
-1. Create folder: `team-dj-mixing/`
-2. Structure:
+1. **Install dependencies:**
+   ```bash
+   pip install -r requirements.txt
    ```
-   team-dj-mixing/
-   ├── src/
-   │   ├── data_preprocessing.py
-   │   ├── model_rule_based.py
-   │   ├── model_audio_similarity.py
-   │   ├── model_hybrid_ml.py
-   │   └── utils.py
-   ├── doc/
-   │   ├── DJ_Mixing_Recommendation_Final.pptx
-   │   └── dj_mixing_analysis.ipynb
-   └── README.md
+
+   Or install individually:
+   ```bash
+   pip install pandas numpy xgboost scikit-learn
    ```
-3. Submit PR to course repository
-4. Submit to Canvas with YouTube link
 
-## Expected Results
+## Running the System
 
-Based on your hypothesis, you should find:
+### Basic Usage
 
-**Rule-Based:**
-- BPM Compatibility: ~100% (by design)
-- Key Compatibility: ~100% (by design)
-- Limitation: May have limited recommendations for some songs
+The main script is `main.py`. You can search for songs using multiple methods:
 
-**Audio Similarity:**
-- BPM Compatibility: ~30-40% (poor!)
-- Key Compatibility: ~20-30% (poor!)
-- Insight: Pure audio similarity doesn't work for DJ mixing
+### 1. Search by Track ID (Exact Match)
+```bash
+python main.py --track_id 5SuOikwiRyPMVoIQDJUgSV
+```
 
-**Hybrid ML:**
-- BPM Compatibility: ~85-95% (best of both!)
-- Key Compatibility: ~80-90% (learned patterns)
-- Feature importance: BPM distance, key compatibility top features
+### 2. Search by Song Name and Artist (Recommended)
+```bash
+python main.py --song "Strobe" --artist "deadmau5"
+```
+
+### 3. Search by Song Name Only (Fuzzy Matching)
+```bash
+python main.py --song "Strobe"
+```
+If multiple matches are found, you'll be prompted to select one.
+
+### 4. Search by Artist Only
+```bash
+python main.py --artist "deadmau5"
+```
+This will show a list of songs by that artist for you to choose from.
+
+### 5. Search by Dataset Index (For Testing)
+```bash
+python main.py --index 0
+```
+
+## Command-Line Options
+
+```
+--track_id <id>        Spotify track ID (exact match)
+--song <name>          Track name (fuzzy matching)
+--artist <name>         Artist name (fuzzy matching)
+--index <number>        Dataset row index
+--data <path>           Path to dataset CSV (default: data/dataset.csv)
+--model_path <path>     Path to hybrid ML model (default: hybrid_model.pkl)
+--train_model           Force retrain the hybrid ML model
+--no_eval              Skip evaluation metrics
+```
+
+## First Run
+
+On the first run, the system will:
+1. Load and preprocess the dataset (~114,000 tracks)
+2. **Train the hybrid ML model** (takes 2-5 minutes)
+3. Save the model to `hybrid_model.pkl` for future use
+
+Subsequent runs will load the pre-trained model (much faster).
+
+## Example Output
+
+```
+================================================================================
+DJ Mixing Recommendation System
+================================================================================
+
+[1/5] Loading and preprocessing dataset...
+Dataset loaded in 2.34 seconds
+
+[2/5] Preparing hybrid ML model...
+Training hybrid ML model (this may take a few minutes)...
+Generating 10000 training samples...
+Training XGBoost model...
+Model trained and saved to hybrid_model.pkl
+
+[3/5] Finding current song...
+Current Song: Strobe by deadmau5 | BPM: 128.0 | Key: 8A | Energy: 0.85
+
+[4/5] Generating recommendations...
+
+[5/5] Results:
+================================================================================
+Rule-Based Recommendations (Top 10)
+================================================================================
+1. Song Name
+   Artist: Artist Name
+   BPM: 128.0 | Key: 8A | Energy: 0.85 | Score: 0.9500
+...
+
+Evaluation Metrics
+...
+Performance Summary
+Total Recommendation Time: 0.234 seconds
+Target Met: ✓
+```
 
 ## Troubleshooting
 
-**Problem: Not enough compatible songs**
-- Solution: Increase BPM tolerance to ±8 or ±10
-- Or use larger dataset
+### "No module named 'xgboost'"
+Install dependencies: `pip install -r requirements.txt`
 
-**Problem: XGBoost training too slow**
-- Solution: Reduce n_pairs to 5000
-- Or reduce n_estimators to 50
+### "FileNotFoundError: data/dataset.csv"
+Make sure the dataset file exists at `data/dataset.csv`
 
-**Problem: Missing columns in dataset**
-- Solution: Check column names in your CSV
-- Update feature lists in code to match your data
+### Model training takes too long
+- The first run trains the model (2-5 minutes)
+- Subsequent runs use the saved model (much faster)
+- You can reduce training samples in `model_hybrid_ml.py` (line with `n_samples=10000`)
 
-**Problem: Low accuracy in hybrid model**
-- Solution: Generate more training pairs (15000+)
-- Try different feature weights
-- Experiment with XGBoost hyperparameters
+### No recommendations found
+- Try a different song
+- Check if the song exists in the dataset
+- Rule-based model requires BPM ±6 and compatible keys, so fewer results
 
-## Timeline
+## Performance
 
-- **Dec 14-15**: Data setup, code testing
-- **Dec 15-16**: Run all three models
-- **Dec 16**: Complete analysis in notebook
-- **Dec 17 AM**: Record demo video
-- **Dec 17 PM**: Submit everything by deadline
+- **First run**: ~2-5 minutes (includes model training)
+- **Subsequent runs**: < 1 second (uses saved model)
+- **Target response time**: < 1 second ✓
 
-## Contact
+## Tips
 
-If you get stuck, check:
-1. README.md for detailed documentation
-2. Code comments in each file
-3. Course Piazza for dataset help
-4. Office hours for ML model tuning
-
-Good luck! You have a great project idea and solid implementation plan! 🎵🎧
+1. **Use exact artist + song name** for fastest results
+2. **Fuzzy matching** works well for partial names or typos
+3. **Rule-based model** is strictest (BPM ±6, key compatible)
+4. **Audio similarity** ignores BPM/key, finds similar-sounding tracks
+5. **Hybrid ML** balances rules with audio features

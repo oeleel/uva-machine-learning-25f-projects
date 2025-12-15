@@ -1,251 +1,337 @@
 """
-Utility functions for DJ mixing recommendation system
-Includes Camelot Wheel implementation and helper functions
+Utility functions for DJ Mixing Recommendation System.
+Includes Camelot Wheel conversion, key compatibility, and data loading helpers.
 """
 
-import numpy as np
 import pandas as pd
+import numpy as np
+from difflib import SequenceMatcher
 
-# Camelot Wheel mapping
-# Maps Spotify key/mode to Camelot notation (used by DJs for harmonic mixing)
-CAMELOT_WHEEL = {
-    # Major keys (B notation)
-    (0, 1): '8B',   # C Major
-    (1, 1): '3B',   # C#/Db Major
-    (2, 1): '10B',  # D Major
-    (3, 1): '5B',   # D#/Eb Major
-    (4, 1): '12B',  # E Major
-    (5, 1): '7B',   # F Major
-    (6, 1): '2B',   # F#/Gb Major
-    (7, 1): '9B',   # G Major
-    (8, 1): '4B',   # G#/Ab Major
-    (9, 1): '11B',  # A Major
-    (10, 1): '6B',  # A#/Bb Major
-    (11, 1): '1B',  # B Major
-    
-    # Minor keys (A notation)
-    (0, 0): '5A',   # C Minor
-    (1, 0): '12A',  # C#/Db Minor
-    (2, 0): '7A',   # D Minor
-    (3, 0): '2A',   # D#/Eb Minor
-    (4, 0): '9A',   # E Minor
-    (5, 0): '4A',   # F Minor
-    (6, 0): '11A',  # F#/Gb Minor
-    (7, 0): '6A',   # G Minor
-    (8, 0): '1A',   # G#/Ab Minor
-    (9, 0): '8A',   # A Minor
-    (10, 0): '3A',  # A#/Bb Minor
-    (11, 0): '10A', # B Minor
-}
 
-# Reverse mapping for quick lookup
-CAMELOT_TO_KEY = {v: k for k, v in CAMELOT_WHEEL.items()}
-
-def get_camelot_notation(key, mode):
+def key_to_camelot(key, mode):
     """
-    Convert Spotify key and mode to Camelot notation
+    Convert Spotify key (0-11) and mode (0=minor, 1=major) to Camelot Wheel notation.
     
     Args:
-        key (int): Spotify key (0=C, 1=C#, ..., 11=B)
-        mode (int): 0=minor, 1=major
+        key: Integer 0-11 (C=0, C#=1, D=2, D#=3, E=4, F=5, F#=6, G=7, G#=8, A=9, A#=10, B=11)
+        mode: Integer 0 (minor) or 1 (major)
     
     Returns:
-        str: Camelot notation (e.g., '8A', '5B')
+        String in Camelot notation (e.g., "8A", "9B")
     """
-    return CAMELOT_WHEEL.get((key, mode), 'Unknown')
+    # Camelot Wheel mapping: Spotify key + 1 (C=1, C#=2, ..., B=12)
+    camelot_number = (key + 1) % 12
+    if camelot_number == 0:
+        camelot_number = 12
+    
+    # Mode: 0 (minor) -> B, 1 (major) -> A
+    camelot_letter = "A" if mode == 1 else "B"
+    
+    return f"{camelot_number}{camelot_letter}"
+
 
 def get_compatible_keys(camelot_key):
     """
-    Get harmonically compatible keys according to Camelot Wheel
+    Get list of compatible Camelot keys for harmonic mixing.
     
-    Rules:
-    - Same key (perfect match)
-    - +1 or -1 on the wheel (energy shift)
-    - Switch between A/B (relative major/minor)
+    Compatible keys are:
+    - Same key (e.g., 8A compatible with 8A)
+    - ±1 on the wheel (e.g., 8A compatible with 7A, 9A)
+    - Same number, different mode (e.g., 8A compatible with 8B)
     
     Args:
-        camelot_key (str): e.g., '8A'
+        camelot_key: String in Camelot notation (e.g., "8A")
     
     Returns:
-        list: Compatible Camelot keys
+        List of compatible Camelot keys
     """
-    if camelot_key == 'Unknown':
+    if not camelot_key or pd.isna(camelot_key):
         return []
     
-    # Extract number and letter
-    num = int(camelot_key[:-1])
+    number = int(camelot_key[:-1])
     letter = camelot_key[-1]
     
-    compatible = [camelot_key]  # Perfect match
+    compatible = [camelot_key]  # Same key
     
-    # +1 and -1 on wheel (energy shift)
-    next_num = (num % 12) + 1
-    prev_num = ((num - 2) % 12) + 1
-    compatible.append(f"{next_num}{letter}")
-    compatible.append(f"{prev_num}{letter}")
+    # ±1 on the wheel
+    prev_number = number - 1 if number > 1 else 12
+    next_number = number + 1 if number < 12 else 1
+    compatible.append(f"{prev_number}{letter}")
+    compatible.append(f"{next_number}{letter}")
     
-    # Relative major/minor (switch A/B)
-    opposite_letter = 'B' if letter == 'A' else 'A'
-    compatible.append(f"{num}{opposite_letter}")
+    # Same number, different mode
+    other_letter = "B" if letter == "A" else "A"
+    compatible.append(f"{number}{other_letter}")
     
-    return compatible
+    return list(set(compatible))  # Remove duplicates
 
-def is_key_compatible(key1, mode1, key2, mode2):
+
+def similarity_ratio(str1, str2):
     """
-    Check if two songs are key compatible for mixing
+    Calculate similarity ratio between two strings using SequenceMatcher.
     
     Args:
-        key1, mode1: First song's key and mode
-        key2, mode2: Second song's key and mode
+        str1: First string
+        str2: Second string
     
     Returns:
-        bool: True if compatible
+        Float between 0 and 1 (1.0 = identical)
     """
-    camelot1 = get_camelot_notation(key1, mode1)
-    camelot2 = get_camelot_notation(key2, mode2)
-    
-    compatible_keys = get_compatible_keys(camelot1)
-    return camelot2 in compatible_keys
+    if pd.isna(str1) or pd.isna(str2):
+        return 0.0
+    return SequenceMatcher(None, str(str1).lower(), str(str2).lower()).ratio()
 
-def calculate_bpm_distance(bpm1, bpm2, tolerance=6):
+
+def deduplicate_search_results(results):
     """
-    Calculate BPM distance and check compatibility
+    Remove duplicate songs from search results.
+    Deduplicates by track_name + artists combination, keeping first occurrence.
     
     Args:
-        bpm1, bpm2: Tempos to compare
-        tolerance: Maximum BPM difference (default ±6)
+        results: DataFrame with search results
     
     Returns:
-        tuple: (distance, is_compatible)
+        DataFrame with duplicates removed
     """
-    distance = abs(bpm1 - bpm2)
+    if len(results) == 0:
+        return results
     
-    # Check half-tempo compatibility (e.g., 128 and 64 BPM)
-    half_tempo_distance = min(abs(bpm1 - 2*bpm2), abs(2*bpm1 - bpm2))
+    # Create unique key from track_name and artists
+    results = results.copy()
+    results['_unique_key'] = (
+        results['track_name'].astype(str).str.lower() + '|' + 
+        results['artists'].astype(str).str.lower()
+    )
     
-    # Use minimum distance
-    min_distance = min(distance, half_tempo_distance)
+    # Remove duplicates, keeping first occurrence
+    results = results.drop_duplicates(subset=['_unique_key'], keep='first')
+    results = results.drop('_unique_key', axis=1)
     
-    is_compatible = min_distance <= tolerance
-    return min_distance, is_compatible
+    return results
 
-def calculate_energy_flow_score(energy1, energy2):
+
+def search_by_track_id(dataset, track_id):
     """
-    Calculate energy flow score (prefer smooth transitions)
+    Search for a song by exact track ID match.
     
     Args:
-        energy1, energy2: Energy values (0-1)
+        dataset: DataFrame with track data
+        track_id: Spotify track ID string
     
     Returns:
-        float: Score (0-1, higher is better)
+        DataFrame row or None if not found
     """
-    # Penalize large jumps in energy
-    energy_diff = abs(energy1 - energy2)
+    result = dataset[dataset['track_id'] == track_id]
+    if len(result) > 0:
+        return result.iloc[0]
+    return None
+
+
+def search_by_track_name(dataset, track_name, fuzzy=True):
+    """
+    Search for songs by track name. Exact matches preferred, then fuzzy matches.
     
-    # Smooth transition: difference < 0.2 is ideal
-    # Large jump: difference > 0.5 is poor
-    if energy_diff < 0.2:
-        return 1.0
-    elif energy_diff < 0.3:
-        return 0.8
-    elif energy_diff < 0.5:
-        return 0.5
+    Args:
+        dataset: DataFrame with track data
+        track_name: Track name to search for
+        fuzzy: Whether to use fuzzy matching if exact match not found
+    
+    Returns:
+        DataFrame with matching tracks, sorted by match quality (exact first)
+    """
+    track_name_lower = str(track_name).lower()
+    
+    # Exact match (case-insensitive)
+    exact_matches = dataset[
+        dataset['track_name'].str.lower() == track_name_lower
+    ]
+    
+    if len(exact_matches) > 0:
+        return deduplicate_search_results(exact_matches)
+    
+    if not fuzzy:
+        return pd.DataFrame()
+    
+    # Partial match (contains)
+    partial_matches = dataset[
+        dataset['track_name'].str.lower().str.contains(track_name_lower, na=False)
+    ]
+    
+    if len(partial_matches) > 0:
+        return deduplicate_search_results(partial_matches)
+    
+    # Fuzzy match
+    dataset['_similarity'] = dataset['track_name'].apply(
+        lambda x: similarity_ratio(x, track_name)
+    )
+    fuzzy_matches = dataset[dataset['_similarity'] > 0.6].sort_values(
+        '_similarity', ascending=False
+    )
+    fuzzy_matches = fuzzy_matches.drop('_similarity', axis=1)
+    
+    return deduplicate_search_results(fuzzy_matches)
+
+
+def search_by_artist(dataset, artist, fuzzy=True):
+    """
+    Search for songs by artist name. Handles multiple artists separated by ';'.
+    
+    Args:
+        dataset: DataFrame with track data
+        artist: Artist name to search for
+        fuzzy: Whether to use fuzzy matching if exact match not found
+    
+    Returns:
+        DataFrame with matching tracks, sorted by match quality
+    """
+    artist_lower = str(artist).lower()
+    
+    # Exact match (case-insensitive) - check if artist appears in artists column
+    exact_matches = dataset[
+        dataset['artists'].str.lower().str.contains(artist_lower, na=False, regex=False)
+    ]
+    
+    if len(exact_matches) > 0:
+        return deduplicate_search_results(exact_matches)
+    
+    if not fuzzy:
+        return pd.DataFrame()
+    
+    # Fuzzy match on artists
+    dataset['_similarity'] = dataset['artists'].apply(
+        lambda x: similarity_ratio(x, artist)
+    )
+    fuzzy_matches = dataset[dataset['_similarity'] > 0.5].sort_values(
+        '_similarity', ascending=False
+    )
+    fuzzy_matches = fuzzy_matches.drop('_similarity', axis=1)
+    
+    return deduplicate_search_results(fuzzy_matches)
+
+
+def search_by_artist_and_track(dataset, artist, track_name, fuzzy=True):
+    """
+    Search for songs by both artist and track name. Exact matches preferred.
+    
+    Args:
+        dataset: DataFrame with track data
+        artist: Artist name
+        track_name: Track name
+        fuzzy: Whether to use fuzzy matching if exact match not found
+    
+    Returns:
+        DataFrame with matching tracks, sorted by match quality
+    """
+    artist_lower = str(artist).lower()
+    track_name_lower = str(track_name).lower()
+    
+    # Exact match on both
+    exact_matches = dataset[
+        (dataset['artists'].str.lower().str.contains(artist_lower, na=False, regex=False)) &
+        (dataset['track_name'].str.lower() == track_name_lower)
+    ]
+    
+    if len(exact_matches) > 0:
+        return deduplicate_search_results(exact_matches)
+    
+    # Partial match on both
+    partial_matches = dataset[
+        (dataset['artists'].str.lower().str.contains(artist_lower, na=False, regex=False)) &
+        (dataset['track_name'].str.lower().str.contains(track_name_lower, na=False))
+    ]
+    
+    if len(partial_matches) > 0:
+        return deduplicate_search_results(partial_matches)
+    
+    if not fuzzy:
+        return pd.DataFrame()
+    
+    # Fuzzy match
+    dataset['_artist_sim'] = dataset['artists'].apply(
+        lambda x: similarity_ratio(x, artist)
+    )
+    dataset['_track_sim'] = dataset['track_name'].apply(
+        lambda x: similarity_ratio(x, track_name)
+    )
+    dataset['_combined_sim'] = (dataset['_artist_sim'] + dataset['_track_sim']) / 2
+    
+    fuzzy_matches = dataset[dataset['_combined_sim'] > 0.6].sort_values(
+        '_combined_sim', ascending=False
+    )
+    fuzzy_matches = fuzzy_matches.drop(['_artist_sim', '_track_sim', '_combined_sim'], axis=1)
+    
+    return deduplicate_search_results(fuzzy_matches)
+
+
+def search_by_index(dataset, index):
+    """
+    Search for a song by dataset row index.
+    
+    Args:
+        dataset: DataFrame with track data
+        index: Integer row index
+    
+    Returns:
+        DataFrame row or None if index out of range
+    """
+    if 0 <= index < len(dataset):
+        return dataset.iloc[index]
+    return None
+
+
+def format_song_info(song):
+    """
+    Format song information for display.
+    
+    Args:
+        song: DataFrame row (Series) with song data
+    
+    Returns:
+        Formatted string
+    """
+    if song is None:
+        return "Song not found"
+    
+    # Handle Series from iterrows()
+    if isinstance(song, pd.Series):
+        if song.empty:
+            return "Song not found"
+        artists = song.get('artists', 'Unknown')
+        track_name = song.get('track_name', 'Unknown')
+        bpm = song.get('tempo', 'N/A')
+        camelot = song.get('camelot_key', 'N/A')
+        energy = song.get('energy', 'N/A')
     else:
-        return 0.2
-
-def normalize_features(df, features):
-    """
-    Normalize feature columns using StandardScaler
+        # Handle dictionary or other types
+        artists = song.get('artists', 'Unknown') if hasattr(song, 'get') else 'Unknown'
+        track_name = song.get('track_name', 'Unknown') if hasattr(song, 'get') else 'Unknown'
+        bpm = song.get('tempo', 'N/A') if hasattr(song, 'get') else 'N/A'
+        camelot = song.get('camelot_key', 'N/A') if hasattr(song, 'get') else 'N/A'
+        energy = song.get('energy', 'N/A') if hasattr(song, 'get') else 'N/A'
     
-    Args:
-        df: DataFrame
-        features: List of column names to normalize
+    # Handle NaN values
+    if pd.isna(artists):
+        artists = 'Unknown'
+    if pd.isna(track_name):
+        track_name = 'Unknown'
+    if pd.isna(camelot):
+        camelot = 'N/A'
     
-    Returns:
-        DataFrame: Normalized features
-    """
-    from sklearn.preprocessing import StandardScaler
+    # Format BPM and energy (handle if they're strings like 'N/A' or NaN)
+    try:
+        if bpm != 'N/A' and pd.notna(bpm):
+            bpm_str = f"{float(bpm):.1f}"
+        else:
+            bpm_str = "N/A"
+    except (ValueError, TypeError):
+        bpm_str = "N/A"
     
-    scaler = StandardScaler()
-    df_norm = df.copy()
-    df_norm[features] = scaler.fit_transform(df[features])
-    return df_norm, scaler
-
-def print_song_info(row):
-    """
-    Pretty print song information
+    try:
+        if energy != 'N/A' and pd.notna(energy):
+            energy_str = f"{float(energy):.2f}"
+        else:
+            energy_str = "N/A"
+    except (ValueError, TypeError):
+        energy_str = "N/A"
     
-    Args:
-        row: DataFrame row with song info
-    """
-    camelot = get_camelot_notation(row['key'], row['mode'])
-    print(f"🎵 {row.get('name', 'Unknown')} - {row.get('artists', 'Unknown')}")
-    print(f"   BPM: {row['tempo']:.1f} | Key: {camelot} | Energy: {row['energy']:.2f}")
-    print()
-
-def calculate_overall_compatibility(bpm1, key1, mode1, energy1,
-                                   bpm2, key2, mode2, energy2,
-                                   bpm_weight=0.4, key_weight=0.3, energy_weight=0.3):
-    """
-    Calculate overall compatibility score between two songs
-    
-    Args:
-        bpm1, key1, mode1, energy1: First song features
-        bpm2, key2, mode2, energy2: Second song features
-        bpm_weight, key_weight, energy_weight: Feature weights
-    
-    Returns:
-        float: Overall compatibility score (0-1)
-    """
-    # BPM compatibility (inverse of normalized distance)
-    bpm_dist, bpm_compatible = calculate_bpm_distance(bpm1, bpm2)
-    bpm_score = max(0, 1 - bpm_dist / 20)  # Normalize to 0-1
-    
-    # Key compatibility (binary)
-    key_score = 1.0 if is_key_compatible(key1, mode1, key2, mode2) else 0.0
-    
-    # Energy flow score
-    energy_score = calculate_energy_flow_score(energy1, energy2)
-    
-    # Weighted combination
-    overall_score = (bpm_weight * bpm_score + 
-                    key_weight * key_score + 
-                    energy_weight * energy_score)
-    
-    return overall_score
-
-# Test the functions
-if __name__ == "__main__":
-    print("Testing Camelot Wheel functions...")
-    print()
-    
-    # Test key conversion
-    print("C Major (key=0, mode=1):", get_camelot_notation(0, 1))
-    print("A Minor (key=9, mode=0):", get_camelot_notation(9, 0))
-    print()
-    
-    # Test compatible keys
-    print("Compatible keys with 8A (A minor):")
-    print(get_compatible_keys('8A'))
-    print()
-    
-    # Test BPM compatibility
-    print("BPM compatibility tests:")
-    print("128 vs 124 BPM:", calculate_bpm_distance(128, 124))
-    print("128 vs 140 BPM:", calculate_bpm_distance(128, 140))
-    print("128 vs 64 BPM (half-tempo):", calculate_bpm_distance(128, 64))
-    print()
-    
-    # Test overall compatibility
-    print("Overall compatibility:")
-    score = calculate_overall_compatibility(
-        bpm1=128, key1=9, mode1=0, energy1=0.8,  # Song 1: 128 BPM, A minor, high energy
-        bpm2=124, key2=9, mode2=0, energy2=0.75  # Song 2: 124 BPM, A minor, high energy
-    )
-    print(f"Compatible songs score: {score:.2f}")
-    
-    score = calculate_overall_compatibility(
-        bpm1=128, key1=9, mode1=0, energy1=0.8,  # Song 1: 128 BPM, A minor, high energy
-        bpm2=140, key2=2, mode2=1, energy2=0.3   # Song 2: 140 BPM, D major, low energy
-    )
-    print(f"Incompatible songs score: {score:.2f}")
+    return f"{track_name} by {artists} | BPM: {bpm_str} | Key: {camelot} | Energy: {energy_str}"

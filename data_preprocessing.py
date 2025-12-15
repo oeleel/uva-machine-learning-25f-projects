@@ -1,225 +1,143 @@
 """
-Data preprocessing for DJ mixing recommendation system
-Loads Spotify dataset and prepares features
+Data preprocessing for DJ Mixing Recommendation System.
+Loads dataset, converts keys to Camelot notation, and prepares features.
 """
 
 import pandas as pd
 import numpy as np
-from utils import get_camelot_notation
+from utils import key_to_camelot, get_compatible_keys
 
-def load_spotify_data(filepath='data/spotify_data.csv'):
+
+def load_dataset(filepath='data/dataset.csv'):
     """
-    Load Spotify dataset from CSV
-    
-    Expected columns:
-    - tempo (BPM)
-    - key (0-11)
-    - mode (0=minor, 1=major)
-    - energy (0-1)
-    - valence (0-1)
-    - danceability (0-1)
-    - acousticness (0-1)
-    - instrumentalness (0-1)
-    - loudness (dB)
+    Load the Spotify dataset from CSV file.
     
     Args:
-        filepath: Path to CSV file
+        filepath: Path to the dataset CSV file
     
     Returns:
-        DataFrame: Cleaned dataset
+        DataFrame with loaded data
     """
-    print(f"Loading data from {filepath}...")
+    print(f"Loading dataset from {filepath}...")
     df = pd.read_csv(filepath)
-    
-    print(f"Original dataset shape: {df.shape}")
-    print(f"Columns: {list(df.columns)}")
-    
+    print(f"Loaded {len(df)} tracks")
     return df
 
-def clean_data(df):
-    """
-    Clean and preprocess the dataset
-    
-    Args:
-        df: Raw DataFrame
-    
-    Returns:
-        DataFrame: Cleaned DataFrame
-    """
-    print("\nCleaning data...")
-    
-    # Required columns for DJ mixing
-    required_cols = ['tempo', 'key', 'mode', 'energy', 'valence', 'danceability']
-    
-    # Check if all required columns exist
-    missing_cols = [col for col in required_cols if col not in df.columns]
-    if missing_cols:
-        print(f"WARNING: Missing columns: {missing_cols}")
-        print("Available columns:", list(df.columns))
-        return None
-    
-    # Remove rows with missing values in key columns
-    df_clean = df.dropna(subset=required_cols)
-    
-    # Filter valid BPM range (typical DJ range: 80-180 BPM)
-    df_clean = df_clean[(df_clean['tempo'] >= 80) & (df_clean['tempo'] <= 180)]
-    
-    # Filter valid key values (0-11)
-    df_clean = df_clean[(df_clean['key'] >= 0) & (df_clean['key'] <= 11)]
-    
-    # Filter valid mode values (0 or 1)
-    df_clean = df_clean[df_clean['mode'].isin([0, 1])]
-    
-    # Filter valid energy values (0-1)
-    df_clean = df_clean[(df_clean['energy'] >= 0) & (df_clean['energy'] <= 1)]
-    
-    print(f"Cleaned dataset shape: {df_clean.shape}")
-    print(f"Removed {len(df) - len(df_clean)} rows")
-    
-    return df_clean
 
-def add_camelot_notation(df):
+def convert_to_camelot(dataset):
     """
-    Add Camelot notation column to DataFrame
+    Convert Spotify key and mode to Camelot Wheel notation.
     
     Args:
-        df: DataFrame with 'key' and 'mode' columns
+        dataset: DataFrame with 'key' and 'mode' columns
     
     Returns:
-        DataFrame: With 'camelot' column added
+        DataFrame with added 'camelot_key' column
     """
-    print("\nAdding Camelot notation...")
-    df['camelot'] = df.apply(lambda row: get_camelot_notation(row['key'], row['mode']), axis=1)
+    print("Converting keys to Camelot Wheel notation...")
     
-    # Count distribution of keys
-    print("\nKey distribution (Camelot notation):")
-    print(df['camelot'].value_counts().head(10))
+    # Handle missing values
+    dataset['key'] = pd.to_numeric(dataset['key'], errors='coerce').fillna(0).astype(int)
+    dataset['mode'] = pd.to_numeric(dataset['mode'], errors='coerce').fillna(0).astype(int)
     
+    # Convert to Camelot notation
+    dataset['camelot_key'] = dataset.apply(
+        lambda row: key_to_camelot(row['key'], row['mode']),
+        axis=1
+    )
+    
+    print(f"Converted {len(dataset[dataset['camelot_key'].notna()])} keys to Camelot notation")
+    return dataset
+
+
+def add_compatible_keys(dataset):
+    """
+    Add compatible keys list for each track.
+    
+    Args:
+        dataset: DataFrame with 'camelot_key' column
+    
+    Returns:
+        DataFrame with added 'compatible_keys' column (list of compatible Camelot keys)
+    """
+    print("Calculating compatible keys...")
+    
+    dataset['compatible_keys'] = dataset['camelot_key'].apply(
+        lambda x: get_compatible_keys(x) if pd.notna(x) else []
+    )
+    
+    return dataset
+
+
+def normalize_audio_features(dataset):
+    """
+    Normalize audio features for similarity calculations.
+    Store original values and add normalized versions.
+    
+    Args:
+        dataset: DataFrame with audio features
+    
+    Returns:
+        DataFrame with normalized features
+    """
+    print("Normalizing audio features...")
+    
+    # Features to normalize
+    audio_features = ['energy', 'valence', 'danceability', 'acousticness', 
+                     'instrumentalness', 'loudness', 'speechiness', 'liveness']
+    
+    # Normalize loudness (typically negative values, normalize to 0-1 range)
+    if 'loudness' in dataset.columns:
+        # Loudness is typically in range -60 to 0, normalize to 0-1
+        min_loudness = dataset['loudness'].min()
+        max_loudness = dataset['loudness'].max()
+        if max_loudness > min_loudness:
+            dataset['loudness_normalized'] = (dataset['loudness'] - min_loudness) / (max_loudness - min_loudness)
+        else:
+            dataset['loudness_normalized'] = 0.5
+    
+    # Other features are already in 0-1 range, but ensure they're numeric
+    for feature in audio_features:
+        if feature in dataset.columns and feature != 'loudness':
+            dataset[feature] = pd.to_numeric(dataset[feature], errors='coerce').fillna(0)
+    
+    return dataset
+
+
+def preprocess_dataset(filepath='data/dataset.csv'):
+    """
+    Complete preprocessing pipeline: load, convert keys, add compatible keys, normalize.
+    
+    Args:
+        filepath: Path to the dataset CSV file
+    
+    Returns:
+        Preprocessed DataFrame ready for recommendation models
+    """
+    # Load dataset
+    df = load_dataset(filepath)
+    
+    # Convert to Camelot notation
+    df = convert_to_camelot(df)
+    
+    # Add compatible keys
+    df = add_compatible_keys(df)
+    
+    # Normalize audio features
+    df = normalize_audio_features(df)
+    
+    # Ensure tempo is numeric
+    df['tempo'] = pd.to_numeric(df['tempo'], errors='coerce')
+    df['energy'] = pd.to_numeric(df['energy'], errors='coerce').fillna(0)
+    
+    print("Preprocessing complete!")
     return df
 
-def create_genre_features(df):
-    """
-    Create genre-based features if genre column exists
-    
-    Args:
-        df: DataFrame
-    
-    Returns:
-        DataFrame: With genre features added
-    """
-    if 'track_genre' in df.columns or 'genre' in df.columns:
-        genre_col = 'track_genre' if 'track_genre' in df.columns else 'genre'
-        print(f"\nGenre distribution:")
-        print(df[genre_col].value_counts().head(10))
-    else:
-        print("\nNo genre column found, skipping genre features")
-    
-    return df
 
-def get_dataset_statistics(df):
-    """
-    Print dataset statistics
-    
-    Args:
-        df: DataFrame
-    """
-    print("\n" + "="*60)
-    print("DATASET STATISTICS")
-    print("="*60)
-    
-    print(f"\nTotal songs: {len(df)}")
-    
-    print("\nBPM Statistics:")
-    print(f"  Mean: {df['tempo'].mean():.1f} BPM")
-    print(f"  Median: {df['tempo'].median():.1f} BPM")
-    print(f"  Range: {df['tempo'].min():.1f} - {df['tempo'].max():.1f} BPM")
-    
-    print("\nEnergy Statistics:")
-    print(f"  Mean: {df['energy'].mean():.2f}")
-    print(f"  Median: {df['energy'].median():.2f}")
-    print(f"  Range: {df['energy'].min():.2f} - {df['energy'].max():.2f}")
-    
-    print("\nKey Distribution:")
-    key_names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-    for i in range(12):
-        count = len(df[df['key'] == i])
-        print(f"  {key_names[i]}: {count} songs")
-    
-    print("\nMode Distribution:")
-    print(f"  Minor (0): {len(df[df['mode'] == 0])} songs")
-    print(f"  Major (1): {len(df[df['mode'] == 1])} songs")
-    
-    print("\n" + "="*60)
-
-def prepare_dataset(filepath='data/spotify_data.csv'):
-    """
-    Complete preprocessing pipeline
-    
-    Args:
-        filepath: Path to CSV file
-    
-    Returns:
-        DataFrame: Fully preprocessed dataset ready for modeling
-    """
-    # Load data
-    df = load_spotify_data(filepath)
-    
-    # Clean data
-    df = clean_data(df)
-    
-    if df is None:
-        print("ERROR: Could not clean data. Check column names.")
-        return None
-    
-    # Add Camelot notation
-    df = add_camelot_notation(df)
-    
-    # Add genre features if available
-    df = create_genre_features(df)
-    
-    # Print statistics
-    get_dataset_statistics(df)
-    
-    # Reset index
-    df = df.reset_index(drop=True)
-    
-    print("\nPreprocessing complete!")
-    return df
-
-def save_processed_data(df, output_path='data/spotify_processed.csv'):
-    """
-    Save processed dataset
-    
-    Args:
-        df: Processed DataFrame
-        output_path: Where to save
-    """
-    df.to_csv(output_path, index=False)
-    print(f"\nSaved processed data to {output_path}")
-
-# Example usage
 if __name__ == "__main__":
-    # This will be run when you execute this file directly
-    print("DJ Mixing Recommendation - Data Preprocessing")
-    print("="*60)
-    
-    # Example: Process the data
-    # Uncomment when you have the dataset downloaded
-    
-    """
-    df = prepare_dataset('data/spotify_data.csv')
-    
-    if df is not None:
-        # Save processed data
-        save_processed_data(df, 'data/spotify_processed.csv')
-        
-        # Show first few rows
-        print("\nFirst 5 songs:")
-        print(df[['name', 'artists', 'tempo', 'camelot', 'energy']].head() 
-              if 'name' in df.columns else df[['tempo', 'camelot', 'energy']].head())
-    """
-    
-    print("\nTo use this script:")
-    print("1. Download Spotify dataset from Kaggle")
-    print("2. Place it in data/spotify_data.csv")
-    print("3. Uncomment the code above and run this file")
+    # Test preprocessing
+    df = preprocess_dataset()
+    print(f"\nSample data:")
+    print(df[['track_name', 'artists', 'tempo', 'key', 'mode', 'camelot_key', 'energy']].head())
+    print(f"\nCompatible keys example:")
+    print(df[['track_name', 'camelot_key', 'compatible_keys']].head())

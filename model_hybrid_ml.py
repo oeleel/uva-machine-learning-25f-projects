@@ -1,333 +1,352 @@
 """
-Model 3: Hybrid ML Recommendation System
-Combines DJ mixing rules with learned audio patterns using XGBoost
+Hybrid ML Recommendation System using XGBoost.
+Combines DJ mixing rules with machine learning for intelligent recommendations.
 """
 
 import pandas as pd
 import numpy as np
 import xgboost as xgb
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from utils import (calculate_bpm_distance, is_key_compatible, 
-                   calculate_energy_flow_score, get_camelot_notation)
+from utils import get_compatible_keys
+import pickle
+import os
 
-class HybridMLRecommender:
+
+def generate_training_data(dataset, n_samples=10000, random_state=42):
     """
-    Hybrid ML recommender combining rule-based features with learned patterns
+    Generate synthetic training data based on DJ mixing rules.
+    
+    Positive examples (label=1): BPM within ±6 AND key compatible AND energy difference < 0.3
+    Negative examples (label=0): BPM > ±6 OR key incompatible OR energy difference > 0.5
+    
+    Args:
+        dataset: DataFrame with preprocessed song data
+        n_samples: Number of training samples to generate
+        random_state: Random seed for reproducibility
+    
+    Returns:
+        DataFrame with columns: [features..., 'label']
     """
+    np.random.seed(random_state)
     
-    def __init__(self, df):
-        """
-        Initialize recommender
-        
-        Args:
-            df: DataFrame with song features
-        """
-        self.df = df.copy()
-        self.model = None
-        self.scaler = StandardScaler()
-        
-        print(f"Initialized Hybrid ML Recommender with {len(df)} songs")
+    print(f"Generating {n_samples} training samples...")
     
-    def create_training_pairs(self, n_pairs=10000, positive_ratio=0.5):
-        """
-        Create training pairs of (source_song, candidate_song, label)
-        
-        Args:
-            n_pairs: Number of pairs to generate
-            positive_ratio: Ratio of compatible pairs
-        
-        Returns:
-            DataFrame: Training pairs with features and labels
-        """
-        print(f"\nGenerating {n_pairs} training pairs...")
-        
-        pairs = []
-        n_positive = int(n_pairs * positive_ratio)
-        n_negative = n_pairs - n_positive
-        
-        # Generate positive pairs (compatible songs)
-        for _ in range(n_positive):
-            # Random source song
-            idx1 = np.random.randint(0, len(self.df))
-            song1 = self.df.iloc[idx1]
-            
-            # Find compatible songs based on rules
-            compatible = self.df[
-                (abs(self.df['tempo'] - song1['tempo']) <= 6) &
-                (self.df.apply(lambda row: is_key_compatible(
-                    song1['key'], song1['mode'], row['key'], row['mode']), axis=1))
-            ]
-            
-            if len(compatible) > 1:
-                idx2 = np.random.choice(compatible.index)
-                song2 = self.df.loc[idx2]
-                pairs.append(self._create_pair_features(song1, song2, label=1))
-        
-        # Generate negative pairs (incompatible songs)
-        for _ in range(n_negative):
-            idx1 = np.random.randint(0, len(self.df))
-            idx2 = np.random.randint(0, len(self.df))
-            
-            song1 = self.df.iloc[idx1]
-            song2 = self.df.iloc[idx2]
-            
-            # Make sure they're actually incompatible
-            bpm_dist, _ = calculate_bpm_distance(song1['tempo'], song2['tempo'])
-            key_compat = is_key_compatible(song1['key'], song1['mode'], 
-                                          song2['key'], song2['mode'])
-            
-            # Only add if significantly incompatible
-            if bpm_dist > 10 or not key_compat:
-                pairs.append(self._create_pair_features(song1, song2, label=0))
-        
-        pairs_df = pd.DataFrame(pairs)
-        print(f"Generated {len(pairs_df)} pairs ({pairs_df['label'].sum()} positive)")
-        
-        return pairs_df
+    training_pairs = []
+    n_songs = len(dataset)
     
-    def _create_pair_features(self, song1, song2, label):
-        """
-        Create feature vector for a song pair
+    # Sample pairs
+    for _ in range(n_samples):
+        # Randomly select two different songs
+        idx1, idx2 = np.random.choice(n_songs, size=2, replace=False)
+        song1 = dataset.iloc[idx1]
+        song2 = dataset.iloc[idx2]
         
-        Args:
-            song1, song2: Song DataFrames
-            label: 1 if compatible, 0 otherwise
+        # Extract features
+        features = extract_pair_features(song1, song2)
         
-        Returns:
-            dict: Feature dictionary
-        """
-        # BPM features
-        bpm_dist, _ = calculate_bpm_distance(song1['tempo'], song2['tempo'])
-        bpm_ratio = song2['tempo'] / song1['tempo'] if song1['tempo'] > 0 else 1
+        # Determine label based on DJ mixing rules
+        label = determine_label(song1, song2)
         
-        # Key features
-        key_compatible = 1 if is_key_compatible(
-            song1['key'], song1['mode'], song2['key'], song2['mode']) else 0
-        key_distance = abs(song1['key'] - song2['key'])
-        mode_match = 1 if song1['mode'] == song2['mode'] else 0
-        
-        # Energy features
-        energy_flow = calculate_energy_flow_score(song1['energy'], song2['energy'])
-        energy_diff = abs(song1['energy'] - song2['energy'])
-        
-        # Audio feature differences
-        valence_diff = abs(song1['valence'] - song2['valence'])
-        danceability_diff = abs(song1['danceability'] - song2['danceability'])
-        
-        features = {
-            # BPM features (weight: 40%)
-            'bpm_distance': bpm_dist,
-            'bpm_ratio': bpm_ratio,
-            'bpm_within_6': 1 if bpm_dist <= 6 else 0,
-            
-            # Key features (weight: 30%)
-            'key_compatible': key_compatible,
-            'key_distance': key_distance,
-            'mode_match': mode_match,
-            
-            # Energy features (weight: 30%)
-            'energy_flow_score': energy_flow,
-            'energy_diff': energy_diff,
-            'valence_diff': valence_diff,
-            'danceability_diff': danceability_diff,
-            
-            # Label
-            'label': label
-        }
-        
-        return features
+        features['label'] = label
+        training_pairs.append(features)
     
-    def train(self, n_pairs=10000, test_size=0.2):
-        """
-        Train the XGBoost model
-        
-        Args:
-            n_pairs: Number of training pairs to generate
-            test_size: Fraction for test set
-        
-        Returns:
-            dict: Training metrics
-        """
-        print("\nTraining Hybrid ML Model...")
-        print("="*60)
-        
-        # Generate training pairs
-        pairs = self.create_training_pairs(n_pairs)
-        
-        # Prepare features and labels
-        feature_cols = [col for col in pairs.columns if col != 'label']
-        X = pairs[feature_cols]
-        y = pairs['label']
-        
-        # Split data
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=test_size, random_state=42, stratify=y
-        )
-        
-        print(f"\nTraining set: {len(X_train)} pairs")
-        print(f"Test set: {len(X_test)} pairs")
-        
-        # Train XGBoost
-        print("\nTraining XGBoost classifier...")
-        self.model = xgb.XGBClassifier(
-            n_estimators=100,
-            max_depth=6,
-            learning_rate=0.1,
-            random_state=42,
-            eval_metric='logloss'
-        )
-        
-        self.model.fit(
-            X_train, y_train,
-            eval_set=[(X_test, y_test)],
-            verbose=False
-        )
-        
-        # Evaluate
-        train_acc = self.model.score(X_train, y_train)
-        test_acc = self.model.score(X_test, y_test)
-        
-        print(f"\nTraining accuracy: {train_acc:.2%}")
-        print(f"Test accuracy: {test_acc:.2%}")
-        
-        # Feature importance
-        importance = pd.DataFrame({
-            'feature': feature_cols,
-            'importance': self.model.feature_importances_
-        }).sort_values('importance', ascending=False)
-        
-        print("\nTop 5 Most Important Features:")
-        print(importance.head())
-        
-        metrics = {
-            'train_accuracy': train_acc,
-            'test_accuracy': test_acc,
-            'feature_importance': importance
-        }
-        
-        return metrics
+    training_df = pd.DataFrame(training_pairs)
     
-    def predict_compatibility(self, song1, song2):
-        """
-        Predict compatibility score between two songs
-        
-        Args:
-            song1, song2: Song DataFrames
-        
-        Returns:
-            float: Compatibility probability (0-1)
-        """
-        if self.model is None:
-            raise ValueError("Model not trained! Call train() first.")
-        
-        # Create feature vector
-        features = self._create_pair_features(song1, song2, label=0)
-        del features['label']
-        
-        # Predict
-        X = pd.DataFrame([features])
-        probability = self.model.predict_proba(X)[0, 1]  # Probability of class 1
-        
-        return probability
+    # Balance the dataset (approximately 50/50)
+    positive_count = training_df['label'].sum()
+    negative_count = len(training_df) - positive_count
     
-    def recommend(self, song_idx, n_recommendations=10, verbose=True, 
-                  use_rule_filter=True):
-        """
-        Recommend songs using hybrid approach
-        
-        Args:
-            song_idx: Index of source song
-            n_recommendations: Number of recommendations
-            verbose: Print details
-            use_rule_filter: Apply BPM filter first
-        
-        Returns:
-            DataFrame: Recommended songs
-        """
-        if self.model is None:
-            raise ValueError("Model not trained! Call train() first.")
-        
-        source_song = self.df.iloc[song_idx]
-        
-        if verbose:
-            print("="*60)
-            print("SOURCE SONG:")
-            print("="*60)
-            camelot = get_camelot_notation(source_song['key'], source_song['mode'])
-            print(f"BPM: {source_song['tempo']:.1f} | Key: {camelot} | "
-                  f"Energy: {source_song['energy']:.2f}")
-            if 'name' in source_song:
-                print(f"Title: {source_song['name']}")
-            print()
-        
-        # Optional: Filter by BPM first (hybrid approach)
-        if use_rule_filter:
-            candidates = self.df[
-                abs(self.df['tempo'] - source_song['tempo']) <= 10
-            ].copy()
-            if verbose:
-                print(f"BPM Pre-filter: {len(candidates)} candidates")
+    print(f"Generated {positive_count} positive examples, {negative_count} negative examples")
+    
+    return training_df
+
+
+def extract_pair_features(song1, song2):
+    """
+    Extract features for a song pair to use in ML model.
+    
+    Args:
+        song1: First song (Series)
+        song2: Second song (Series)
+    
+    Returns:
+        Dictionary of features
+    """
+    # BPM distance (40% weight in scoring)
+    bpm_distance = abs(song1.get('tempo', 0) - song2.get('tempo', 0))
+    
+    # Key compatibility (30% weight in scoring)
+    key1 = song1.get('camelot_key', '')
+    key2 = song2.get('camelot_key', '')
+    key_compatible = 1 if (pd.notna(key1) and pd.notna(key2) and 
+                          key2 in get_compatible_keys(key1)) else 0
+    
+    # Energy difference (30% weight in scoring)
+    energy_diff = abs(song1.get('energy', 0) - song2.get('energy', 0))
+    
+    # Additional audio feature differences
+    valence_diff = abs(song1.get('valence', 0) - song2.get('valence', 0))
+    danceability_diff = abs(song1.get('danceability', 0) - song2.get('danceability', 0))
+    acousticness_diff = abs(song1.get('acousticness', 0) - song2.get('acousticness', 0))
+    instrumentalness_diff = abs(song1.get('instrumentalness', 0) - song2.get('instrumentalness', 0))
+    
+    # Loudness difference (normalized)
+    loudness1 = song1.get('loudness', 0)
+    loudness2 = song2.get('loudness', 0)
+    loudness_diff = abs(loudness1 - loudness2) / 60.0  # Normalize to 0-1 range
+    
+    # Genre compatibility (1 if same genre, 0 if different)
+    genre1 = song1.get('track_genre', '')
+    genre2 = song2.get('track_genre', '')
+    genre_compatible = 1 if (pd.notna(genre1) and pd.notna(genre2) and 
+                            str(genre1).lower().strip() == str(genre2).lower().strip()) else 0
+    
+    features = {
+        'bpm_distance': bpm_distance,
+        'key_compatible': key_compatible,
+        'energy_diff': energy_diff,
+        'valence_diff': valence_diff,
+        'danceability_diff': danceability_diff,
+        'acousticness_diff': acousticness_diff,
+        'instrumentalness_diff': instrumentalness_diff,
+        'loudness_diff': loudness_diff,
+        'genre_compatible': genre_compatible,
+    }
+    
+    return features
+
+
+def determine_label(song1, song2):
+    """
+    Determine label (1=good transition, 0=bad) based on DJ mixing rules.
+    
+    Args:
+        song1: First song (Series)
+        song2: Second song (Series)
+    
+    Returns:
+        1 if good transition, 0 if bad
+    """
+    bpm1 = song1.get('tempo', 0)
+    bpm2 = song2.get('tempo', 0)
+    bpm_diff = abs(bpm1 - bpm2)
+    
+    key1 = song1.get('camelot_key', '')
+    key2 = song2.get('camelot_key', '')
+    key_compatible = (pd.notna(key1) and pd.notna(key2) and 
+                     key2 in get_compatible_keys(key1))
+    
+    energy1 = song1.get('energy', 0)
+    energy2 = song2.get('energy', 0)
+    energy_diff = abs(energy1 - energy2)
+    
+    # Positive: BPM within ±6 AND key compatible AND energy difference < 0.3
+    if bpm_diff <= 6 and key_compatible and energy_diff < 0.3:
+        return 1
+    
+    # Negative: BPM > ±6 OR key incompatible OR energy difference > 0.5
+    if bpm_diff > 6 or not key_compatible or energy_diff > 0.5:
+        return 0
+    
+    # Borderline cases: default to negative
+    return 0
+
+
+def train_hybrid_model(training_data, model_path='hybrid_model.pkl'):
+    """
+    Train XGBoost model on synthetic training data.
+    
+    Args:
+        training_data: DataFrame with features and labels
+        model_path: Path to save the trained model
+    
+    Returns:
+        Trained XGBoost model
+    """
+    print("Training XGBoost model...")
+    
+    # Separate features and labels
+    feature_cols = [col for col in training_data.columns if col != 'label']
+    X = training_data[feature_cols]
+    y = training_data['label']
+    
+    # Create XGBoost classifier
+    # Use sample_weight to emphasize BPM (40%), Key (30%), Energy (30%)
+    # We'll weight samples based on feature importance
+    model = xgb.XGBClassifier(
+        n_estimators=100,
+        max_depth=6,
+        learning_rate=0.1,
+        random_state=42,
+        eval_metric='logloss'
+    )
+    
+    # Train model
+    model.fit(X, y)
+    
+    # Save model
+    with open(model_path, 'wb') as f:
+        pickle.dump(model, f)
+    
+    print(f"Model trained and saved to {model_path}")
+    print(f"Feature importance:")
+    for i, feature in enumerate(feature_cols):
+        print(f"  {feature}: {model.feature_importances_[i]:.4f}")
+    
+    return model, feature_cols
+
+
+def load_model(model_path='hybrid_model.pkl'):
+    """
+    Load a pre-trained model.
+    
+    Args:
+        model_path: Path to saved model
+    
+    Returns:
+        Tuple of (model, feature_columns) or (None, None) if not found
+    """
+    if os.path.exists(model_path):
+        with open(model_path, 'rb') as f:
+            model = pickle.load(f)
+        # Feature columns should match the training data
+        feature_cols = ['bpm_distance', 'key_compatible', 'energy_diff', 
+                       'valence_diff', 'danceability_diff', 'acousticness_diff',
+                       'instrumentalness_diff', 'loudness_diff', 'genre_compatible']
+        return model, feature_cols
+    return None, None
+
+
+def predict_compatibility_score(model, feature_cols, current_song, candidate_song):
+    """
+    Predict compatibility score for a song pair.
+    
+    Args:
+        model: Trained XGBoost model
+        feature_cols: List of feature column names
+        current_song: Series with current song data
+        candidate_song: Series with candidate song data
+    
+    Returns:
+        Compatibility score (probability of good transition, 0-1)
+    """
+    features = extract_pair_features(current_song, candidate_song)
+    
+    # Handle models trained without genre_compatible feature
+    feature_vector = []
+    for col in feature_cols:
+        if col in features:
+            feature_vector.append(features[col])
         else:
-            candidates = self.df.copy()
-        
-        # Score all candidates with ML model
-        scores = []
-        for idx, candidate in candidates.iterrows():
-            if idx != song_idx:  # Skip source song
-                score = self.predict_compatibility(source_song, candidate)
-                scores.append((idx, score))
-        
-        # Sort by score
-        scores.sort(key=lambda x: x[1], reverse=True)
-        
-        # Get top N
-        top_indices = [idx for idx, _ in scores[:n_recommendations]]
-        top_scores = [score for _, score in scores[:n_recommendations]]
-        
-        recommendations = self.df.loc[top_indices].copy()
-        recommendations['ml_score'] = top_scores
-        
-        if verbose:
-            print(f"\nTop {n_recommendations} Recommendations:")
-            print("-"*60)
-            for i, (idx, row) in enumerate(recommendations.iterrows(), 1):
-                camelot = get_camelot_notation(row['key'], row['mode'])
-                print(f"{i}. ML Score: {row['ml_score']:.3f} | "
-                      f"BPM: {row['tempo']:.1f} | Key: {camelot}")
-                if 'name' in row:
-                    print(f"   {row['name']}")
-            print()
-        
-        return recommendations
+            # Default value if feature missing (for backward compatibility)
+            feature_vector.append(0.0)
+    
+    feature_vector = np.array([feature_vector])
+    
+    # Predict probability of positive class (good transition)
+    score = model.predict_proba(feature_vector)[0][1]
+    
+    return score
 
 
-# Example usage
+def recommend_hybrid_ml(current_song, dataset, model, feature_cols, top_k=10):
+    """
+    Hybrid ML recommendation: use trained model to predict compatibility scores.
+    
+    Args:
+        current_song: Series with current song data
+        dataset: DataFrame with all candidate songs
+        model: Trained XGBoost model
+        feature_cols: List of feature column names
+        top_k: Number of recommendations to return
+    
+    Returns:
+        DataFrame with top_k recommendations, sorted by compatibility score
+    """
+    current_track_id = current_song.get('track_id', '')
+    
+    # Exclude current song
+    candidates = dataset[dataset['track_id'] != current_track_id].copy()
+    
+    if len(candidates) == 0:
+        return pd.DataFrame()
+    
+    # Calculate compatibility scores for all candidates
+    scores = []
+    for _, candidate in candidates.iterrows():
+        score = predict_compatibility_score(model, feature_cols, current_song, candidate)
+        scores.append(score)
+    
+    candidates['compatibility_score'] = scores
+    
+    # Heavily prioritize BPM, Key, and Energy with strong bonuses
+    current_bpm = current_song.get('tempo', 0)
+    current_camelot = current_song.get('camelot_key', '')
+    current_energy = current_song.get('energy', 0)
+    
+    # BPM bonus: Strong boost for songs within ±6 BPM
+    bpm_diff = abs(candidates['tempo'] - current_bpm)
+    bpm_bonus = np.where(bpm_diff <= 6, 0.2, np.where(bpm_diff <= 12, 0.05, -0.15))
+    candidates['compatibility_score'] += bpm_bonus
+    
+    # Key bonus: Strong boost for compatible keys
+    if pd.notna(current_camelot):
+        compatible_keys = get_compatible_keys(current_camelot)
+        key_match = candidates['camelot_key'].isin(compatible_keys)
+        candidates.loc[key_match, 'compatibility_score'] += 0.15
+        candidates.loc[~key_match, 'compatibility_score'] -= 0.1
+    
+    # Energy bonus: Boost for similar energy levels
+    energy_diff = abs(candidates['energy'] - current_energy)
+    energy_bonus = np.where(energy_diff < 0.2, 0.1, np.where(energy_diff < 0.4, 0.03, -0.05))
+    candidates['compatibility_score'] += energy_bonus
+    
+    # Add genre bonus: small boost for same genre
+    current_genre = current_song.get('track_genre', '')
+    if pd.notna(current_genre):
+        current_genre_str = str(current_genre).lower().strip()
+        genre_match = candidates['track_genre'].astype(str).str.lower().str.strip() == current_genre_str
+        # Small bonus to same-genre songs
+        candidates.loc[genre_match, 'compatibility_score'] += 0.02
+    
+    # Remove duplicates: keep highest scoring version of each unique song
+    # First deduplicate by track_id
+    candidates = candidates.sort_values('compatibility_score', ascending=False)
+    candidates = candidates.drop_duplicates(subset=['track_id'], keep='first')
+    
+    # Also deduplicate by track_name + artists (in case track_id has duplicates)
+    candidates['_unique_key'] = candidates['track_name'].astype(str) + '|' + candidates['artists'].astype(str)
+    candidates = candidates.drop_duplicates(subset=['_unique_key'], keep='first')
+    
+    # Exclude current song by track_name + artists (in case track_id doesn't match)
+    current_track_name = str(current_song.get('track_name', '')).lower().strip()
+    current_artists = str(current_song.get('artists', '')).lower().strip()
+    current_unique_key = f"{current_track_name}|{current_artists}"
+    candidates = candidates[candidates['_unique_key'].str.lower() != current_unique_key]
+    candidates = candidates.drop('_unique_key', axis=1)
+    
+    # Sort by score and return top_k
+    recommendations = candidates.nlargest(top_k, 'compatibility_score')
+    
+    return recommendations[['track_id', 'track_name', 'artists', 'tempo', 'camelot_key',
+                           'energy', 'compatibility_score']]
+
+
 if __name__ == "__main__":
-    print("Testing Hybrid ML Recommender")
-    print("="*60)
+    # Test with sample data
+    from data_preprocessing import preprocess_dataset
     
-    # Create sample dataset
-    np.random.seed(42)
-    n_songs = 500  # Larger dataset for training
-    
-    sample_data = pd.DataFrame({
-        'tempo': np.random.uniform(80, 180, n_songs),
-        'key': np.random.randint(0, 12, n_songs),
-        'mode': np.random.randint(0, 2, n_songs),
-        'energy': np.random.uniform(0, 1, n_songs),
-        'valence': np.random.uniform(0, 1, n_songs),
-        'danceability': np.random.uniform(0, 1, n_songs),
-    })
-    
-    # Initialize and train
-    recommender = HybridMLRecommender(sample_data)
-    metrics = recommender.train(n_pairs=5000)
-    
-    # Test recommendation
-    print("\n" + "="*60)
-    print("Testing recommendation for song index 0:")
-    recommendations = recommender.recommend(0, n_recommendations=5, verbose=True)
-    
-    print("="*60)
-    print("Hybrid model successfully combines rules + ML!")
+    df = preprocess_dataset()
+    if len(df) > 0:
+        print("Generating training data...")
+        training_data = generate_training_data(df, n_samples=5000)
+        
+        print("\nTraining model...")
+        model, feature_cols = train_hybrid_model(training_data)
+        
+        print("\nTesting recommendations...")
+        current = df.iloc[0]
+        print(f"Current song: {current['track_name']} by {current['artists']}")
+        
+        recommendations = recommend_hybrid_ml(current, df, model, feature_cols, top_k=10)
+        print(f"\nFound {len(recommendations)} recommendations:")
+        print(recommendations[['track_name', 'artists', 'tempo', 'camelot_key', 'compatibility_score']].head(10))
