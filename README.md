@@ -1,6 +1,19 @@
-# DJ Mixing Recommendation System
+# DJ Song Mixing Recommendation System
 
-A machine learning system that recommends mixable songs for DJs based on BPM, musical key, and energy flow. The system implements three models: Rule-Based, Audio Similarity Baseline, and Hybrid ML (XGBoost).
+**Team:** Ashley Wu, Bonny Koo, Nathan Suh, Leo Lee  
+**Course:** CS 4774 Machine Learning - UVA Fall 2025
+
+## Overview
+
+A machine learning system that recommends songs for seamless DJ transitions by combining music theory (BPM, harmonic key compatibility) with audio features. The system compares three approaches: rule-based DJ constraints, audio similarity, and a hybrid ML model.
+
+## Problem Statement
+
+DJs spend hours finding compatible songs for mixing. This system automates the process by recommending songs that match based on:
+
+- **BPM compatibility** (±6 BPM ideal for beatmatching)
+- **Key compatibility** (Camelot Wheel harmonic mixing)
+- **Energy flow** for smooth transitions
 
 ## Project Structure
 
@@ -16,7 +29,8 @@ team-x/
 │   ├── utils.py
 │   └── visualize_results.py
 ├── doc/                    # Documentation
-│   └── QUICKSTART.md
+│   ├── QUICKSTART.md
+│   └── PROJECT_STRUCTURE.md
 ├── data/                   # Dataset
 │   └── dataset.csv
 ├── requirements.txt        # Python dependencies
@@ -24,56 +38,69 @@ team-x/
 └── README.md              # This file
 ```
 
-## Features
+## Three Models
 
-- **Three Recommendation Models:**
-  - Rule-Based: Uses hard constraints (BPM ±6, key compatibility)
-  - Audio Similarity: Content-based filtering using cosine similarity
-  - Hybrid ML: XGBoost model combining DJ rules with audio features
+### Model 1: Rule-Based System
+Traditional DJ approach using hard constraints.
 
-- **Multiple Search Methods:**
-  - Search by track ID, song name, artist, or dataset index
-  - Fuzzy matching with exact match preference
+- Filters songs within ±6 BPM
+- Requires Camelot Wheel key compatibility
+- Ranks by weighted score (40% BPM, 35% Key, 20% Energy, 5% Genre)
 
-- **DJ Mixing Rules:**
-  - BPM compatibility (±6 BPM tolerance)
-  - Camelot Wheel key compatibility
-  - Energy flow analysis
-  - Genre matching
+### Model 2: Audio Similarity Baseline
+Content-based filtering using cosine similarity.
+
+- Compares energy, valence, danceability, acousticness
+- Ignores BPM/key constraints
+- Finds similar-sounding songs (but often unmixable)
+
+### Model 3: Hybrid ML System
+XGBoost classifier combining rules with learned patterns.
+
+- Trained on 10,000 song pairs labeled by DJ rules
+- Features: BPM distance, key compatibility, energy difference
+- Post-processing boosts for BPM/key/energy compatibility
 
 ## Installation
 
-1. Install dependencies:
 ```bash
+# Clone the repository
+git clone https://github.com/oeleel/uva-machine-learning-25f-projects.git
+cd uva-machine-learning-25f-projects
+
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-2. Ensure dataset is at `data/dataset.csv`
+## Dataset
+
+Download the Spotify dataset from Kaggle and place it at `data/dataset.csv`.
+
+**Dataset Statistics:**
+- Size: ~114,000 songs
+- Features: tempo, key, mode, energy, valence, danceability, acousticness, instrumentalness, loudness
 
 ## Usage
 
-### Basic Usage
+### Command Line Interface
 
 Run from the project root directory:
 
 ```bash
-# Search by song and artist
+# Search by song name and artist
 python src/main.py --song "Strobe" --artist "deadmau5"
 
-# Search by track ID
-python src/main.py --track_id 5SuOikwiRyPMVoIQDJUgSV
+# Search by song name only (fuzzy matching)
+python src/main.py --song "Blinding Lights"
 
-# Search by song name only
-python src/main.py --song "Strobe"
-
-# Search by artist
-python src/main.py --artist "deadmau5"
-
-# Search by index
+# Search by dataset index
 python src/main.py --index 0
+
+# Search by Spotify track ID
+python src/main.py --track_id 5SuOikwiRyPMVoIQDJUgSV
 ```
 
-### Command-Line Options
+### Options
 
 ```
 --track_id <id>        Spotify track ID (exact match)
@@ -109,23 +136,6 @@ On the first run, the system will:
 
 Subsequent runs will load the pre-trained model (much faster).
 
-## Model Details
-
-### Rule-Based Model
-- Filters by BPM ±6 and key compatibility
-- Ranks by BPM distance, key score, and energy flow
-- Weights: 40% BPM, 35% Key, 20% Energy, 5% Genre
-
-### Audio Similarity Model
-- Uses cosine similarity on audio features
-- Adds bonuses for BPM/key/energy compatibility
-- Ignores strict DJ rules (baseline comparison)
-
-### Hybrid ML Model
-- XGBoost classifier trained on synthetic labels
-- Combines DJ mixing rules with audio features
-- Post-processing boosts for BPM/key/energy compatibility
-
 ## Evaluation Metrics
 
 The system evaluates recommendations on:
@@ -133,6 +143,22 @@ The system evaluates recommendations on:
 - **Key Compatibility**: % with compatible keys (target: 80%+)
 - **Energy Flow**: Average energy difference (target: smooth transitions)
 - **Response Time**: Must be < 1 second
+
+## Camelot Wheel
+
+The Camelot Wheel is the industry standard for harmonic mixing. Compatible keys are:
+
+- Same key (e.g., 8A → 8A)
+- ±1 on the wheel (e.g., 8A → 7A or 9A)
+- Same number, different mode (e.g., 8A → 8B)
+
+## Performance
+
+| Stage | Time |
+|-------|------|
+| First run (includes training) | 2-5 minutes |
+| Subsequent runs (cached model) | < 1 second |
+| Recommendation generation | < 0.3 seconds |
 
 ## Documentation
 
@@ -150,4 +176,4 @@ See `doc/QUICKSTART.md` for detailed usage instructions and troubleshooting.
 
 ## License
 
-See LICENSE file for details.
+This project is for educational purposes as part of UVA CS 4774.
